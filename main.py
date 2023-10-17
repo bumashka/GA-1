@@ -1,6 +1,10 @@
 import base64
+import datetime
 import math
 import random
+import sys
+import time
+
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -9,69 +13,65 @@ class SimpleGA:
     def __init__(self, config):
         # Максимальное количество хромосом в популяции
         self.max_population = config['max_population']
-        # Эпоха
+        # Максимальное количество эпох
         self.max_epochs = config['max_epochs']
-        self.crossover_chance = config['crossover_chance']
-        self.mutation_chance = config['mutation_chance']
+        # Актуальная эпоха
         self.current_epoch = 0
+        # Вероятность кроссовера
+        self.crossover_chance = config['crossover_chance']
+        # Вероятность мутации
+        self.mutation_chance = config['mutation_chance']
         # Нижняя граница
         self.lower_bound = float(config['lower_bound'])
-        self.delta = 0.001
-        self.current_best_solution = float(self.lower_bound)
         # Верхняя граница
         self.upper_bound = config['upper_bound']
         # Количество точек, на которые делим отрезок
         self.chromosome_length = 15
-        self.max_number_of_slices = 2**self.chromosome_length
-        # Точки, на которые делим отрезок
-        self.points = np.linspace(self.lower_bound, self.upper_bound, self.max_number_of_slices)
         # Коды для этих точек
-        self.codes = [format(x, '015b') for x in range(0, len(self.points))]
+        self.codes = [format(x, '015b') for x in range(0, 2**self.chromosome_length)]
         # Как из кода хромосомы получить точку на отрезке
         self.from_binary_to_number = lambda x: round(self.lower_bound + int(x, 2) * ((self.upper_bound - self.lower_bound)
-                                                                       / (self.max_number_of_slices - 1)), 3)
+                                                                       / (2**self.chromosome_length - 1)), 3)
+        #Функция, с которой работаем
         self.function = lambda x: (math.sin(2*x))/x**2
         # Актуальная популяция хромосом
-        self.population = [self.codes[random.randint(0, self.max_number_of_slices-1)] for x in range(0, self.max_population)]
-        # Актуальная популяция значений хромосом
-        self.population_numbers = [self.from_binary_to_number(x) for x in self.population]
+        self.population = [self.codes[random.randint(0, 2**self.chromosome_length-1)] for x in range(0, self.max_population)]
+        # Потомки актуальной популяции
+        self.children = []
+        # Лучшее решение актуальной популяции
+        self.current_best_solution = -sys.maxsize - 1
 
-    def fitness_function(self, chromosome):
-        return self.function(self.from_binary_to_number(chromosome))/sum([self.function(self.from_binary_to_number(x))
-                                                                          for x in self.population])
-
-    def selection(self, k=2):
+    def selection(self):
         reselected_population = []
-        M = []
-        for chromosome in self.population:
-            P = self.fitness_function(chromosome)
-            for i in range(0, int(abs(P)*self.max_population)):
-                M.append(chromosome)
+        avg = np.mean([self.function(self.from_binary_to_number(x)) for x in self.population])
+        fitness_function = [self.function(self.from_binary_to_number(x))/avg for x in self.population]
         for i in range(0, self.max_population):
-            selected_chromosome = M[random.randint(0, len(M)-1)]
-            reselected_population.append(selected_chromosome)
+           for ff in range(0, int(abs(fitness_function[i]))):
+               reselected_population.append(self.population[i])
+           if random.uniform(0, 1) <= int(abs(fitness_function[i]) % 1 * 1000):
+               reselected_population.append(self.population[i])
         self.population = reselected_population
 
     def crossover(self):
-        for i in range(0, self.max_population):
+        for i in range(0, len(self.population)):
             if random.uniform(0, 1) <= self.crossover_chance:
-                chrom_a = self.population[random.randint(0, (self.max_population)/2-1)]
-                chrom_b = self.population[random.randint((self.max_population)/2, self.max_population-1)]
-                self.population.remove(chrom_a)
-                self.population.remove(chrom_b)
+                chrom_a = self.population[i]
 
-                k = random.randint(0, self.chromosome_length)
+                chrom_b = self.population[random.randint(0, len(self.population)-1)]
+
+                k = random.randint(0, self.chromosome_length-1)
 
                 chrom_a_ = chrom_a[:k] + chrom_b[k:]
                 chrom_b_ = chrom_b[:k] + chrom_a[k:]
 
-                self.population.append(chrom_a_)
-                self.population.append(chrom_b_)
+                self.children.append(chrom_a_)
+                self.children.append(chrom_b_)
 
     def mutation(self):
-        for i in range(0, self.max_population):
-            if random.uniform(0, 1) <= self.mutation_chance:
-                chrom_a = self.population[random.randint(0, self.max_population-1)]
+        for i in range(0, len(self.children)):
+            if round(random.uniform(0, 1), 3) <= self.mutation_chance:
+                a_place = random.randint(0, len(self.children)-1)
+                chrom_a = self.children[a_place]
                 k = random.randint(0, self.chromosome_length-1)
                 temp = list(chrom_a)
                 if chrom_a[k] == '0':
@@ -79,63 +79,65 @@ class SimpleGA:
                 else:
                     temp[k] = '0'
                 chrom_a_ = ''.join(temp)
-                self.population.remove(chrom_a)
-                self.population.append(chrom_a_)
+                self.children[a_place] = chrom_a_
+
+    def sort(self):
+        return lambda x: self.function(self.from_binary_to_number(x))
+
+    def reduction(self):
+        self.population = self.population + self.children
+        self.population.sort(key=self.sort(), reverse=True)
+        self.population = self.population[:self.max_population]
 
     def plot_graph(self):
         x = np.arange(self.lower_bound, self.upper_bound + 0.1, 0.1)
         y = [self.function(i) for i in x]
-        print(max(y))
-        x_population = [round(self.from_binary_to_number(x), 3) for x in self.population]
-        y_population = [round(self.function(x), 3) for x in x_population]
+        x_population = [self.from_binary_to_number(x) for x in self.population]
+        y_population = [self.function(x) for x in x_population]
         plt.plot(x,y)
         plt.scatter(x_population, y_population, alpha=0.5, c=[np.arange(self.max_population)])
         plt.xlabel('X')
         plt.ylabel('Y')
         plt.title(f'График функции для {self.current_epoch} эпохи')
         plt.grid(True)
-        plt.savefig('график.png')
-
-    def write_population_to_file(self):
-        self.plot_graph()
-        with open('график.png', 'rb') as file:
-            image = base64.b64encode(file.read()).decode('utf-8')
-        # Добавление графика и описания  на HTML-страницу
-        html_content = f'''
-            <html>
-            <body>
-                <h2>График функции {self.current_epoch} эпохи</h2>
-                <img src="data:image/png;base64,{image}" alt="График" />
-                <p>Настоящее лучшее решение: {self.current_best_solution}</p>
-            </body>
-            </html>
-            '''
-        with open('результат.html', 'a') as file:
-            file.write(html_content)
+        plt.show()
 
     def run(self):
-        stop = True
-        while stop:
+        epochs_without_changes = 0
+        delta = 0.001
+        self.plot_graph()
+        while self.current_epoch != self.max_epochs and epochs_without_changes != 10:
             self.current_epoch += 1
             self.selection()
             self.crossover()
             self.mutation()
+            self.reduction()
             best_solution = max([self.function(self.from_binary_to_number(x)) for x in self.population])
-            if round(abs(best_solution - self.current_best_solution), 3) < self.delta:
-                stop = False
+            print(
+f"""
+++++++++++
+Эпоха: {self.current_epoch}
+Лучшее решение эпохи: {best_solution}
+Лучшее решение за все эпохи: {self.current_best_solution}
+Количество эпох без изменения результата: {epochs_without_changes}
+++++++++++
+"""
+            )
+            if round(abs(best_solution - self.current_best_solution)) <= delta:
+                epochs_without_changes += 1
             elif best_solution > self.current_best_solution:
                 self.current_best_solution = best_solution
-            if self.current_epoch == self.max_epochs:
-                stop = False
-
-            self.write_population_to_file()
+                epochs_without_changes = 0
+            else:
+                epochs_without_changes = 0
+            self.plot_graph()
 
 def main():
     config = {
-        "crossover_chance" : 0.9,
-        "mutation_chance" : 0.5,
-        "max_population" : 100,
-        "max_epochs" : 50,
+        "crossover_chance" : 0.6,
+        "mutation_chance" : 0.001,
+        "max_population" : 50,
+        "max_epochs" : 100,
         "lower_bound" : -20,
         "upper_bound" : -3.1,
     }
@@ -143,5 +145,5 @@ def main():
     GA.run()
 
 if __name__ == '__main__':
-    random.seed(1001)
+    random.seed(round(time.time()))
     main()
